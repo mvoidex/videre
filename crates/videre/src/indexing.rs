@@ -22,7 +22,7 @@ pub fn index_paths(
         .collect();
     let records: Vec<videre::types::FileRecord> = paths
         .par_iter()
-        .filter_map(|path| videre::hasher::hash_file(path).ok())
+        .filter_map(|path| videre::hasher::hash_file_in(library, path).ok())
         .collect();
     videre::sqlite_output::write_records_in(conn, library, &records)?;
     videre::sqlite_output::resolve_unresolved(conn)?;
@@ -36,6 +36,39 @@ pub fn index_paths(
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn event_indexing_ignores_appledouble_but_keeps_a_real_dot_underscore_jpeg() {
+        let root = tempfile::tempdir().unwrap();
+        let cache = tempfile::tempdir().unwrap();
+        let library = videre_core::library::LibraryContext::new(root.path(), cache.path()).unwrap();
+        let conn = videre_core::library_db::initialize(&library).unwrap();
+        let photo = library.paths.root.join("._çiçek.jpg");
+        image::RgbImage::new(2, 2).save(&photo).unwrap();
+        let sidecar = library.paths.root.join("._başka.jpg");
+        let mut header = [0; 26];
+        header[..4].copy_from_slice(&0x0005_1607u32.to_be_bytes());
+        header[4..8].copy_from_slice(&0x0002_0000u32.to_be_bytes());
+        std::fs::write(&sidecar, header).unwrap();
+
+        let written = index_paths(
+            &conn,
+            &library,
+            vec![photo.clone(), sidecar.clone()],
+            videre_core::marks::XmpPrecedence::Db,
+            true,
+        )
+        .unwrap();
+
+        assert_eq!(written, vec![photo]);
+        assert_eq!(
+            conn.query_row("SELECT count(*) FROM file_hashes", [], |r| r
+                .get::<_, i64>(0))
+                .unwrap(),
+            1
+        );
+        assert_eq!(std::fs::read(sidecar).unwrap(), header);
+    }
 
     #[test]
     fn index_paths_stores_rows_for_exactly_the_given_files() {

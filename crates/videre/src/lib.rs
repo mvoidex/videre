@@ -1,3 +1,4 @@
+pub mod appledouble;
 mod bmff;
 pub mod content_key;
 pub mod display_size;

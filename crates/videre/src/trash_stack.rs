@@ -401,6 +401,21 @@ pub fn undo_latest(
 mod tests {
     use super::*;
 
+    #[test]
+    fn old_appledouble_trash_entries_can_still_be_verified_for_undo() {
+        let temp = tempfile::tempdir().unwrap();
+        let path = temp.path().join("._çiçek.jpg");
+        let mut bytes = [0; 26];
+        bytes[..4].copy_from_slice(&0x0005_1607u32.to_be_bytes());
+        bytes[4..8].copy_from_slice(&0x0002_0000u32.to_be_bytes());
+        std::fs::write(&path, bytes).unwrap();
+        let mut old = entry("._çiçek.jpg");
+        old.hash = blake3::hash(&bytes).to_hex().to_string();
+        old.size = bytes.len() as u64;
+
+        assert!(is_the_same_file(&old, &path));
+    }
+
     fn entry(path: &str) -> Entry {
         Entry {
             file: Moved {

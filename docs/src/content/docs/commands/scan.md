@@ -51,6 +51,11 @@ detected type, and available media metadata. Photo metadata includes capture
 date, GPS coordinates, and dimensions. Video metadata can also include capture
 date, GPS coordinates, dimensions, duration, and codec.
 
+Confirmed [AppleDouble metadata](/reference/file-types/#appledouble-metadata)
+is skipped before hashing, even if its name ends in `.jpg` or another supported
+extension. A real image whose name starts with `._` is still indexed. Files on
+disk are unchanged.
+
 ### Where a file's date comes from
 
 Every file gets one capture date, the one every date filter, the gallery's date

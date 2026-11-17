@@ -6,6 +6,30 @@ use std::io::{self, BufReader, Read, Seek, SeekFrom};
 use std::path::Path;
 use std::time::SystemTime;
 
+#[derive(Debug)]
+struct AppleDoubleMetadata;
+
+enum AppleDoublePolicy {
+    Hash,
+    Ignore,
+}
+
+impl std::fmt::Display for AppleDoubleMetadata {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.write_str("AppleDouble metadata is not a media file")
+    }
+}
+
+impl std::error::Error for AppleDoubleMetadata {}
+
+/// A known metadata container is an intentional exclusion, not a failed
+/// image read. Callers can omit it without recording a misleading warning.
+pub fn is_appledouble_error(error: &io::Error) -> bool {
+    error
+        .get_ref()
+        .is_some_and(|cause| cause.is::<AppleDoubleMetadata>())
+}
+
 #[derive(Default)]
 struct ExifData {
     exif_date: Option<String>,
@@ -164,6 +188,9 @@ fn extract_exif(path: &Path) -> ExifData {
 /// point (which can block `fs::metadata`/`File::open`/`read` indefinitely on
 /// macOS rather than fail fast) turns into a returned error instead of
 /// hanging the scan forever on one file.
+///
+/// Raw verification also hashes AppleDouble: `dedupe undo` must still verify
+/// metadata files trashed by an older version. Indexing uses [`hash_file_in`].
 pub fn hash_file(path: &Path) -> io::Result<FileRecord> {
     // Preserve the bounded, stat-first guard before opening a possibly stale
     // mount. The file size no longer sets a total hashing deadline.
@@ -177,13 +204,15 @@ pub fn hash_file(path: &Path) -> io::Result<FileRecord> {
         videre_core::io_timeout::DEFAULT_IO_TIMEOUT,
         move |progress| {
             let file = File::open(&owned)?;
-            hash_open_file(&owned, file, &progress)
+            hash_open_file(&owned, file, &progress, AppleDoublePolicy::Hash)
         },
     )
     .map_err(videre_core::io_timeout::IoRunError::into_io_error)?
 }
 
 /// Hash one original through the selected library's pinned I/O boundary.
+/// Known AppleDouble containers return an intentional metadata exclusion,
+/// identifiable with [`is_appledouble_error`], before their contents are hashed.
 pub fn hash_file_in(
     ctx: &videre_core::library::LibraryContext,
     path: &Path,
@@ -208,7 +237,7 @@ pub fn hash_file_in_observed(
     videre_core::io_timeout::run_with_progress_timeout_on(
         progress.clone(),
         videre_core::io_timeout::DEFAULT_IO_TIMEOUT,
-        move |progress| hash_open_file(&owned, file, &progress),
+        move |progress| hash_open_file(&owned, file, &progress, AppleDoublePolicy::Ignore),
     )
     .map_err(videre_core::io_timeout::IoRunError::into_io_error)?
 }
@@ -217,6 +246,7 @@ fn hash_open_file(
     path: &Path,
     file: File,
     progress: &videre_core::io_timeout::ProgressHandle,
+    appledouble_policy: AppleDoublePolicy,
 ) -> io::Result<FileRecord> {
     let metadata = file.metadata()?;
     let size_bytes = metadata.len();
@@ -237,6 +267,14 @@ fn hash_open_file(
         read += n;
     }
     head.truncate(read);
+    if matches!(appledouble_policy, AppleDoublePolicy::Ignore)
+        && crate::appledouble::is_header(&head, size_bytes)
+    {
+        return Err(io::Error::new(
+            io::ErrorKind::InvalidData,
+            AppleDoubleMetadata,
+        ));
+    }
     // An unrecognised file records the sentinel rather than NULL, so NULL
     // keeps its single meaning of "never scanned". A zero-byte file stays
     // NULL: nothing was read.

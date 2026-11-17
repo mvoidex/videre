@@ -9,6 +9,63 @@ fn scan(library: &TestLibrary, args: &[&str]) -> std::process::Output {
 }
 
 #[test]
+fn scan_ignores_appledouble_content_and_keeps_real_dot_underscore_photos() {
+    let library = TestLibrary::new();
+    let ordinary = library
+        .copy_fixture("tiny.jpg", "Özgür.jpg")
+        .canonicalize()
+        .unwrap();
+    let hidden = library
+        .copy_fixture("tiny.jpg", "._gerçek.jpg")
+        .canonicalize()
+        .unwrap();
+    let broken = library.context().paths.root.join("bozuk.jpg");
+    std::fs::write(&broken, b"unrecognised image bytes").unwrap();
+    let metadata = common::appledouble_bytes();
+    let root = library.context().paths.root;
+    std::fs::create_dir(root.join("nested")).unwrap();
+    let sidecars: Vec<_> = ["._Özgür.jpg", "nested/._kayıp.HEIC", "metaveri.jpg"]
+        .into_iter()
+        .map(|name| root.join(name))
+        .collect();
+    for path in &sidecars {
+        std::fs::write(path, &metadata).unwrap();
+    }
+
+    for _ in 0..2 {
+        let output = scan(&library, &["--silent"]);
+        assert!(
+            output.status.success(),
+            "{}",
+            String::from_utf8_lossy(&output.stderr)
+        );
+        assert!(!String::from_utf8_lossy(&output.stderr).contains("AppleDouble"));
+        let conn = library.conn();
+        let mut statement = conn
+            .prepare("SELECT path FROM file_hashes ORDER BY path")
+            .unwrap();
+        let stored: Vec<String> = statement
+            .query_map([], |r| r.get(0))
+            .unwrap()
+            .map(Result::unwrap)
+            .collect();
+        let mut expected: Vec<String> = [&ordinary, &hidden, &broken]
+            .into_iter()
+            .map(|p| p.display().to_string())
+            .collect();
+        expected.sort();
+        assert_eq!(stored, expected);
+        for path in &sidecars {
+            assert_eq!(std::fs::read(path).unwrap(), metadata);
+        }
+        // macOS can recreate the metadata at any time. The next scan must
+        // still ignore it without removing or changing anything on disk.
+        std::fs::remove_file(&sidecars[0]).unwrap();
+        std::fs::write(&sidecars[0], &metadata).unwrap();
+    }
+}
+
+#[test]
 fn scan_writes_local_records_with_correct_hashes() {
     let library = TestLibrary::new();
     let path = library.copy_fixture("tiny.jpg", "nested/image.jpg");

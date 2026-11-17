@@ -43,6 +43,24 @@ an incremental [`scan`](/commands/scan/) reopening the same file on every run. S
 Files scanned before type detection existed have no recorded type until you
 re-scan; those also fall back to the extension.
 
+## AppleDouble metadata
+
+macOS stores extended attributes and resource forks in AppleDouble companions
+on filesystems such as exFAT. A file named `._photo.jpg` is usually one of these
+metadata containers rather than another photo. Videre recognises its content
+from the AppleDouble magic, supported version and fixed header, and checks that
+the declared entry table fits in the file. It skips confirmed containers before
+hashing, in both [`scan`](/commands/scan/) and [`watch`](/commands/watch/).
+
+The name alone never excludes a file: a real JPEG called `._photo.jpg` is still
+indexed. AppleDouble without its companion photo, or with another name, is
+also skipped. AppleSingle containers are not excluded by this rule because they
+can contain the original data. Unrecognised or incomplete headers keep the
+normal indexing behaviour.
+
+The metadata files are left on disk, so macOS can recreate or update them
+without adding more media to the library.
+
 ## EXIF fields
 
 EXIF is read from `jpg`, `jpeg`, `tiff`, `heic` and `dng`. Fields are empty when
