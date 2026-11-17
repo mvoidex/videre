@@ -94,6 +94,24 @@ videre config set read-rate 5
 
 See [tuning](/guides/tuning/#slow-drives-and-large-files).
 
+## Initializing an exFAT library fails with `Operation not supported`
+
+Some macOS exFAT volumes reject the no-overwrite rename used to publish a new
+database, reporting `Operation not supported (os error 45)` at
+`publish .../.videre/hashes.db`.
+
+Videre falls back automatically when that operation is unsupported: it reserves
+the database name exclusively, then renames the completed database over its own
+empty reservation while holding the initialization locks. An existing file,
+directory or symlink at that name is refused. The fallback relies on other
+processes respecting those locks and leaving `.videre` unchanged during
+initialization.
+
+If initialization is interrupted, run [`videre scan`](/commands/scan/) again.
+An empty reservation and leftover temporary builds are recovered automatically.
+Other errors, such as permission failures or a full disk, are still reported;
+this fallback only handles an unsupported database-publication operation.
+
 ## HEIC photos or videos are skipped on Linux
 
 Expected. HEIC and video frames are decoded through a macOS system tool, so on
